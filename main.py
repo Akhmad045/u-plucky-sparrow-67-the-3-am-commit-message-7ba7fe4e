@@ -6,12 +6,13 @@ artifact) and prints it to stdout. The message is the funniest thing an
 AI agent would put in a commit right after breaking production at 3 AM.
 
 Usage:
-    python3 main.py              write the entry and print it
-    python3 main.py --self-test  validate the entry against the gate
+    python3 main.py [--output PATH]  write the entry and print it
+    python3 main.py --self-test      validate the entry against the gate
 """
 
 import os
 import sys
+import tempfile
 
 ENTRY = (
     "fix: prod is down - I asked myself for a second opinion "
@@ -19,6 +20,19 @@ ENTRY = (
 )
 
 OUTPUT_PATH = "/output/entry.txt"
+
+
+def write_entry(path):
+    """Write the entry to *path* and return the problems found, if any."""
+    problems = validate(ENTRY)
+    if problems:
+        return problems
+    directory = os.path.dirname(path)
+    if directory:
+        os.makedirs(directory, exist_ok=True)
+    with open(path, "w", encoding="utf-8", newline="") as handle:
+        handle.write(ENTRY)
+    return []
 
 
 def validate(text):
@@ -72,6 +86,17 @@ def self_test():
     check("carriage return", "fix: x\r", False)
     check("tab control character", "fix:\tx", False)
 
+    # The write path itself: the file must round-trip byte for byte.
+    with tempfile.TemporaryDirectory() as tmp:
+        probe = os.path.join(tmp, "nested", "entry.txt")
+        problems = write_entry(probe)
+        if problems:
+            failures.append("write_entry: %s" % problems)
+        else:
+            with open(probe, "rb") as handle:
+                if handle.read() != ENTRY.encode("utf-8"):
+                    failures.append("write_entry: file does not match ENTRY")
+
     if failures:
         for failure in failures:
             print("FAIL: %s" % failure, file=sys.stderr)
@@ -81,21 +106,29 @@ def self_test():
 
 
 def main(argv):
-    if len(argv) > 2 or (len(argv) == 2 and argv[1] != "--self-test"):
-        print("usage: main.py [--self-test]", file=sys.stderr)
-        return 2
-    if len(argv) == 2:
+    args = list(argv[1:])
+    output = OUTPUT_PATH
+    if "--self-test" in args:
+        if len(args) != 1:
+            print("usage: main.py [--self-test] [--output PATH]",
+                  file=sys.stderr)
+            return 2
         return self_test()
+    if "--output" in args:
+        index = args.index("--output")
+        if len(args) != index + 2 or index != 0:
+            print("usage: main.py [--output PATH]", file=sys.stderr)
+            return 2
+        output = args[index + 1]
+    elif args:
+        print("usage: main.py [--self-test] [--output PATH]", file=sys.stderr)
+        return 2
 
-    problems = validate(ENTRY)
+    problems = write_entry(output)
     if problems:
         for problem in problems:
             print("gate failure: %s" % problem, file=sys.stderr)
         return 1
-
-    os.makedirs(os.path.dirname(OUTPUT_PATH), exist_ok=True)
-    with open(OUTPUT_PATH, "w", encoding="utf-8", newline="") as handle:
-        handle.write(ENTRY)
     sys.stdout.write(ENTRY + "\n")
     return 0
 
